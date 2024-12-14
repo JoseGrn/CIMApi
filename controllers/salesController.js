@@ -32,6 +32,32 @@ const createSale = async (req, res) => {
         try {
             await connection.beginTransaction();
 
+            // Calcular el total de los combos utilizando el precio del combo
+            if (combos && combos.length > 0) {
+                for (const combo of combos) {
+                    const { comboID, cantidad } = combo;
+
+                    if (!comboID || !cantidad) {
+                        throw new Error('Datos de combo no válidos. Asegúrate de enviar comboID y cantidad.');
+                    }
+
+                    // Obtener el precio del combo
+                    const [comboResult] = await connection.execute(
+                        `SELECT PrecioCombo FROM Combos WHERE ComboID = ? AND Estado = 1`,
+                        [comboID]
+                    );
+
+                    if (comboResult.length === 0) {
+                        throw new Error(`El combo con ID ${comboID} no existe o está inactivo.`);
+                    }
+
+                    const precioCombo = comboResult[0].PrecioCombo;
+                    const subtotalCombo = precioCombo * cantidad;
+
+                    totalVenta += subtotalCombo;
+                }
+            }
+
             // Calcular el total de los productos individuales
             if (productos && productos.length > 0) {
                 for (const producto of productos) {
@@ -42,31 +68,6 @@ const createSale = async (req, res) => {
                     }
 
                     totalVenta += subtotal;
-                }
-            }
-
-            // Calcular el total de los combos
-            if (combos && combos.length > 0) {
-                for (const combo of combos) {
-                    const { comboID, cantidad } = combo;
-
-                    if (!comboID || !cantidad) {
-                        throw new Error('Datos de combo no válidos. Asegúrate de enviar comboID y cantidad.');
-                    }
-
-                    // Obtener los detalles del combo
-                    const [comboDetails] = await connection.execute(
-                        `SELECT dc.ProductoID, dc.Cantidad AS CantidadProducto, p.PrecioPorLibra
-                         FROM DetalleCombo dc
-                         JOIN Productos p ON dc.ProductoID = p.ProductoID
-                         WHERE dc.ComboID = ?`,
-                        [comboID]
-                    );
-
-                    for (const detail of comboDetails) {
-                        const subtotal = detail.CantidadProducto * cantidad * detail.PrecioPorLibra;
-                        totalVenta += subtotal;
-                    }
                 }
             }
 
@@ -102,6 +103,7 @@ const createSale = async (req, res) => {
                 for (const combo of combos) {
                     const { comboID, cantidad } = combo;
 
+                    // Obtener los detalles del combo
                     const [comboDetails] = await connection.execute(
                         `SELECT dc.ProductoID, dc.Cantidad AS CantidadProducto, p.PrecioPorLibra
                          FROM DetalleCombo dc
@@ -216,4 +218,94 @@ const getSaleById = async (req, res) => {
     }
 };
 
-module.exports = { createSale, getAllSales, getSaleById };
+// Obtener ventas agrupadas por día
+const getSalesByDay = async (req, res) => {
+    try {
+        // Validar el token
+        const token = req.header('Authorization');
+        if (!token) {
+            return res.status(401).json({ message: 'Acceso denegado, no hay token' });
+        }
+
+        let decoded;
+        try {
+            decoded = jwt.verify(token, process.env.JWT_SECRET);
+        } catch (err) {
+            return res.status(401).json({ message: 'Token no válido' });
+        }
+
+        const [sales] = await db.execute(`
+            SELECT DATE(FechaVenta) AS fecha, SUM(TotalVenta) AS total
+            FROM Ventas
+            WHERE FechaVenta >= CURDATE() - INTERVAL 7 DAY
+            GROUP BY DATE(FechaVenta)
+            ORDER BY fecha DESC
+        `);
+
+        res.json({ sales });
+    } catch (err) {
+        res.status(500).json({ message: 'Error del servidor', error: err.message });
+    }
+};
+
+// Obtener ventas totales de la semana
+const getSalesByWeek = async (req, res) => {
+    try {
+        // Validar el token
+        const token = req.header('Authorization');
+        if (!token) {
+            return res.status(401).json({ message: 'Acceso denegado, no hay token' });
+        }
+
+        let decoded;
+        try {
+            decoded = jwt.verify(token, process.env.JWT_SECRET);
+        } catch (err) {
+            return res.status(401).json({ message: 'Token no válido' });
+        }
+
+        const [sales] = await db.execute(`
+            SELECT YEARWEEK(FechaVenta, 1) AS semana, SUM(TotalVenta) AS total
+            FROM Ventas
+            WHERE FechaVenta >= CURDATE() - INTERVAL 1 MONTH
+            GROUP BY YEARWEEK(FechaVenta, 1)
+            ORDER BY semana DESC
+        `);
+
+        res.json({ sales });
+    } catch (err) {
+        res.status(500).json({ message: 'Error del servidor', error: err.message });
+    }
+};
+
+// Obtener ventas totales del mes actual con el último día del mes
+const getSalesByMonth = async (req, res) => {
+    try {
+        // Validar el token
+        const token = req.header('Authorization');
+        if (!token) {
+            return res.status(401).json({ message: 'Acceso denegado, no hay token' });
+        }
+
+        let decoded;
+        try {
+            decoded = jwt.verify(token, process.env.JWT_SECRET);
+        } catch (err) {
+            return res.status(401).json({ message: 'Token no válido' });
+        }
+
+        const [sales] = await db.execute(`
+            SELECT 
+                LAST_DAY(CURDATE()) AS fecha, 
+                SUM(TotalVenta) AS total
+            FROM Ventas
+            WHERE YEAR(FechaVenta) = YEAR(CURDATE()) AND MONTH(FechaVenta) = MONTH(CURDATE())
+        `);
+
+        res.json({ sales });
+    } catch (err) {
+        res.status(500).json({ message: 'Error del servidor', error: err.message });
+    }
+};
+
+module.exports = { createSale, getAllSales, getSaleById, getSalesByDay, getSalesByWeek, getSalesByMonth };

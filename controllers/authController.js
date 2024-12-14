@@ -188,4 +188,98 @@ const editUser = async (req, res) => {
     }
 };
 
-module.exports = { register, login, deleteUser, editUser };
+const getAllUsers = async (req, res) => {
+    try {
+        // Extraer el token del encabezado
+        const token = req.header('Authorization');
+        if (!token) {
+            return res.status(401).json({ message: 'Acceso denegado, no hay token' });
+        }
+
+        // Verificar el token
+        let decoded;
+        try {
+            decoded = jwt.verify(token, process.env.JWT_SECRET);
+        } catch (err) {
+            return res.status(401).json({ message: 'Token no válido' });
+        }
+
+        // Verificar si el rol del usuario autenticado es 'Administrador'
+        if (decoded.rol !== 'Administrador') {
+            return res.status(403).json({ message: 'Acceso denegado, solo los administradores pueden ver usuarios' });
+        }
+
+        // Consultar todos los usuarios activos
+        const [users] = await db.execute('SELECT * FROM Usuarios WHERE Estado = 1');
+
+        res.json({ users });
+    } catch (err) {
+        res.status(500).json({ message: 'Error del servidor', error: err.message });
+    }
+};
+
+// Obtener un usuario por su ID
+const getUserById = async (req, res) => {
+    try {
+        // Extraer el token del encabezado
+        const token = req.header('Authorization');
+        if (!token) {
+            return res.status(401).json({ message: 'Acceso denegado, no hay token' });
+        }
+
+        // Verificar el token
+        let decoded;
+        try {
+            decoded = jwt.verify(token, process.env.JWT_SECRET);
+        } catch (err) {
+            return res.status(401).json({ message: 'Token no válido' });
+        }
+
+        // Verificar si el rol del usuario autenticado es 'Administrador'
+        if (decoded.rol !== 'Administrador') {
+            return res.status(403).json({ message: 'Acceso denegado, solo los administradores pueden ver usuarios' });
+        }
+
+        // Extraer el ID del usuario desde los parámetros de la URL
+        const { id } = req.params;
+
+        // Consultar el usuario por su ID y verificar que esté activo
+        const [user] = await db.execute('SELECT * FROM Usuarios WHERE UsuarioID = ? AND Estado = 1', [id]);
+
+        if (user.length === 0) {
+            return res.status(404).json({ message: 'Usuario no encontrado o inactivo' });
+        }
+
+        res.json({ user: user[0] });
+    } catch (err) {
+        res.status(500).json({ message: 'Error del servidor', error: err.message });
+    }
+};
+
+// Obtener el rol del usuario a partir del token
+const getUserRole = async (req, res) => {
+    try {
+        // Extraer el token del encabezado
+        const token = req.header('Authorization');
+        if (!token) {
+            return res.status(401).json({ message: 'Acceso denegado, no hay token' });
+        }
+
+        // Verificar el token
+        let decoded;
+        try {
+            decoded = jwt.verify(token, process.env.JWT_SECRET);
+        } catch (err) {
+            return res.status(401).json({ message: 'Token no válido' });
+        }
+
+        // Extraer el rol y el username del payload del token
+        const { rol, username } = decoded;
+
+        res.json({ message: `${rol}` });
+    } catch (err) {
+        res.status(500).json({ message: 'Error del servidor', error: err.message });
+    }
+};
+
+module.exports = { register, login, deleteUser, editUser, getAllUsers, getUserById, getUserRole };

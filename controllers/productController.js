@@ -32,7 +32,8 @@ const createProduct = async (req, res) => {
             precioPorMediaLibra,
             cantidadMinima,
             tipoEmpaque,
-            estado
+            estado,
+            pesoXCaja  // Nuevo campo
         } = req.body;
 
         // Validar que los campos requeridos estén presentes
@@ -43,8 +44,8 @@ const createProduct = async (req, res) => {
         // Insertar el nuevo producto en la base de datos
         await db.execute(
             `INSERT INTO Productos 
-            (Nombre, Descripcion, PesoDisponible, PrecioPorLibra, PrecioPorMediaLibra, CantidadMinima, TipoEmpaque, Estado) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            (Nombre, Descripcion, PesoDisponible, PrecioPorLibra, PrecioPorMediaLibra, CantidadMinima, TipoEmpaque, Estado, PesoXCaja) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 nombre,
                 descripcion || null,
@@ -53,7 +54,8 @@ const createProduct = async (req, res) => {
                 precioPorMediaLibra,
                 cantidadMinima,
                 tipoEmpaque || null,
-                estado !== undefined ? estado : 1
+                estado !== undefined ? estado : 1,
+                pesoXCaja || null  // Nuevo campo
             ]
         );
 
@@ -150,11 +152,13 @@ const editProduct = async (req, res) => {
             precioPorMediaLibra,
             cantidadMinima,
             tipoEmpaque,
-            estado
+            estado,
+            pesoXCaja  // Nuevo campo
         } = req.body;
 
         // Validar que al menos un campo se va a actualizar
-        if (!nombre && !descripcion && !pesoDisponible && !precioPorLibra && !precioPorMediaLibra && !cantidadMinima && !tipoEmpaque && estado === undefined) {
+        if (!nombre && !descripcion && !pesoDisponible && !precioPorLibra && !precioPorMediaLibra &&
+            !cantidadMinima && !tipoEmpaque && estado === undefined && pesoXCaja === undefined) {
             return res.status(400).json({ message: 'No hay datos para actualizar' });
         }
 
@@ -193,6 +197,10 @@ const editProduct = async (req, res) => {
         if (estado !== undefined) {
             updateFields.push('Estado = ?');
             values.push(estado);
+        }
+        if (pesoXCaja !== undefined) {
+            updateFields.push('PesoXCaja = ?');
+            values.push(pesoXCaja);
         }
 
         values.push(id);
@@ -249,4 +257,83 @@ const deleteProduct = async (req, res) => {
     }
 };
 
-module.exports = { createProduct, getAllProducts, getProductById, editProduct, deleteProduct };
+const addInventory = async (req, res) => {
+    try {
+        // Extraer el token del encabezado
+        const token = req.header('Authorization');
+        if (!token) {
+            return res.status(401).json({ message: 'Acceso denegado, no hay token' });
+        }
+
+        // Verificar el token
+        let decoded;
+        try {
+            decoded = jwt.verify(token, process.env.JWT_SECRET);
+        } catch (err) {
+            return res.status(401).json({ message: 'Token no válido' });
+        }
+
+        // Verificar si el rol del usuario autenticado es 'Administrador'
+        if (decoded.rol !== 'Administrador') {
+            return res.status(403).json({ message: 'Acceso denegado, solo los administradores pueden agregar inventario' });
+        }
+
+        // Extraer los productos y cantidades desde el cuerpo de la solicitud
+        const { productos } = req.body;
+
+        if (!productos || !Array.isArray(productos) || productos.length === 0) {
+            return res.status(400).json({ message: 'Debe proporcionar una lista de productos con sus cantidades' });
+        }
+
+        const connection = await db.getConnection();
+
+        try {
+            await connection.beginTransaction();
+
+            for (const item of productos) {
+                const { productoID, cantidad } = item;
+
+                if (!productoID || !cantidad) {
+                    throw new Error('Datos de producto no válidos. Asegúrate de enviar productoID y cantidad.');
+                }
+
+                // Obtener el PesoXCaja del producto
+                const [result] = await connection.execute(
+                    `SELECT PesoXCaja FROM Productos WHERE ProductoID = ? AND Estado = 1`,
+                    [productoID]
+                );
+
+                if (result.length === 0) {
+                    throw new Error(`El producto con ID ${productoID} no existe o está inactivo.`);
+                }
+
+                const pesoXCaja = result[0].PesoXCaja;
+
+                if (!pesoXCaja) {
+                    throw new Error(`El producto con ID ${productoID} no tiene definido un PesoXCaja.`);
+                }
+
+                // Calcular el peso a agregar
+                const pesoTotal = cantidad * pesoXCaja;
+
+                // Actualizar el PesoDisponible del producto
+                await connection.execute(
+                    `UPDATE Productos SET PesoDisponible = PesoDisponible + ? WHERE ProductoID = ?`,
+                    [pesoTotal, productoID]
+                );
+            }
+
+            await connection.commit();
+            res.status(200).json({ message: 'Inventario actualizado exitosamente' });
+        } catch (err) {
+            await connection.rollback();
+            res.status(500).json({ message: 'Error al actualizar inventario', error: err.message });
+        } finally {
+            connection.release();
+        }
+    } catch (err) {
+        res.status(500).json({ message: 'Error del servidor', error: err.message });
+    }
+};
+
+module.exports = { createProduct, getAllProducts, getProductById, editProduct, deleteProduct, addInventory };

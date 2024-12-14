@@ -40,7 +40,8 @@ CREATE TABLE Productos (
     CantidadMinima INT NOT NULL,
     TipoEmpaque VARCHAR(50),
     Estado BOOLEAN DEFAULT 1,
-    FechaRegistro DATETIME DEFAULT CURRENT_TIMESTAMP
+    FechaRegistro DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PesoXCaja INT
 );
 
 -- ==============================
